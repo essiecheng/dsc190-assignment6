@@ -99,7 +99,7 @@ def _apply_offset(base: date, days: int, months: int, sign: int) -> date:
 def _parse_offset_str(s: str) -> tuple[int, int] | None:
     """Parse '5 days', '1 year and 2 months', etc. Returns (days, months)."""
     s = s.lower().strip()
-    parts = re.split(r"\s+and\s+", s)
+    parts = re.split(r"\s+and\s+|,\s*", s)
     total_days = 0
     total_months = 0
     for part in parts:
