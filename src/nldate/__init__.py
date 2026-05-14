@@ -127,8 +127,8 @@ def _parse_absolute(s: str) -> date | None:
     """Parse absolute date strings (ISO, named-month, numeric)."""
     s = s.strip()
 
-    # ISO: YYYY-MM-DD
-    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", s)
+    # ISO with dashes or slashes: YYYY-MM-DD or YYYY/MM/DD
+    m = re.fullmatch(r"(\d{4})[/\-](\d{2})[/\-](\d{2})", s)
     if m:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
@@ -218,9 +218,7 @@ def parse(s: str, today: date | None = None) -> date:
             return today + timedelta(days=delta)
 
     # ── in N units ────────────────────────────────────────────────────────────
-    m = re.fullmatch(
-        rf"in\s+{_WORD_NUM_RE}\s+(days?|weeks?|months?|years?)", low
-    )
+    m = re.fullmatch(rf"in\s+{_WORD_NUM_RE}\s+(days?|weeks?|months?|years?)", low)
     if m:
         n = _to_int(m.group(1))
         unit = m.group(2).lower()
@@ -235,9 +233,7 @@ def parse(s: str, today: date | None = None) -> date:
                 return _add_months(today, n * 12)
 
     # ── N units ago ───────────────────────────────────────────────────────────
-    m = re.fullmatch(
-        rf"{_WORD_NUM_RE}\s+(days?|weeks?|months?|years?)\s+ago", low
-    )
+    m = re.fullmatch(rf"{_WORD_NUM_RE}\s+(days?|weeks?|months?|years?)\s+ago", low)
     if m:
         n = _to_int(m.group(1))
         unit = m.group(2).lower()
@@ -258,7 +254,7 @@ def parse(s: str, today: date | None = None) -> date:
     if m:
         n = _to_int(m.group(1))
         unit = m.group(2).lower()
-        base_orig = norm[m.start(3):]
+        base_orig = norm[m.start(3) :]
         if n is not None:
             try:
                 base = parse(base_orig, today)
@@ -284,7 +280,7 @@ def parse(s: str, today: date | None = None) -> date:
     if bm:
         offset_str = bm.group(1)
         direction = bm.group(2)
-        base_orig = norm[bm.start(3):]
+        base_orig = norm[bm.start(3) :]
         try:
             base = parse(base_orig, today)
         except ValueError:
