@@ -127,8 +127,8 @@ def _parse_absolute(s: str) -> date | None:
     """Parse absolute date strings (ISO, named-month, numeric)."""
     s = s.strip()
 
-    # ISO with dashes or slashes: YYYY-MM-DD or YYYY/MM/DD
-    m = re.fullmatch(r"(\d{4})[/\-](\d{2})[/\-](\d{2})", s)
+    # ISO: YYYY-MM-DD or YYYY/MM/DD (month/day may be 1 or 2 digits)
+    m = re.fullmatch(r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})", s)
     if m:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
