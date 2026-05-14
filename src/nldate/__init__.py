@@ -47,7 +47,7 @@ MONTHS: dict[str, int] = {
     "dec": 12,
 }
 
-# Ordered longest-first to avoid short alternatives shadowing longer ones.
+# Ordered longest-first so alternation doesn't shadow longer alternatives.
 _WORD_NUMBERS: dict[str, int] = {
     "twelve": 12,
     "eleven": 11,
@@ -68,10 +68,12 @@ _WORD_NUMBERS: dict[str, int] = {
 _WORD_NUM_RE = r"(\d+|" + "|".join(_WORD_NUMBERS.keys()) + r")"
 _MONTH_RE = "|".join(MONTHS.keys())
 _WEEKDAY_RE = "|".join(WEEKDAYS.keys())
+# Pattern that strips trailing periods from abbreviated month names.
+_MONTH_DOT_RE = re.compile(r"\b(" + _MONTH_RE + r")\.", re.IGNORECASE)
 
 
 def _add_months(d: date, months: int) -> date:
-    """Add a signed number of months to a date, clamping the day if needed."""
+    """Add a signed number of months, clamping the day to a valid value."""
     total = d.year * 12 + (d.month - 1) + months
     year, month = total // 12, total % 12 + 1
     day = min(d.day, calendar.monthrange(year, month)[1])
@@ -123,11 +125,17 @@ def _parse_offset_str(s: str) -> tuple[int, int] | None:
     return (total_days, total_months)
 
 
+def _next_weekday(today: date, target: int) -> date:
+    """Next occurrence of weekday *target* (0=Mon); returns today if today matches."""
+    delta = (target - today.weekday()) % 7
+    return today + timedelta(days=delta)
+
+
 def _parse_absolute(s: str) -> date | None:
-    """Parse absolute date strings (ISO, named-month, numeric)."""
+    """Parse absolute date strings in a variety of common formats."""
     s = s.strip()
 
-    # ISO: YYYY-MM-DD or YYYY/MM/DD (month/day may be 1 or 2 digits)
+    # ISO: YYYY-MM-DD or YYYY/MM/DD (1- or 2-digit month/day accepted)
     m = re.fullmatch(r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})", s)
     if m:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -137,35 +145,52 @@ def _parse_absolute(s: str) -> date | None:
     if m:
         return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
 
-    # Month DD[st/nd/rd/th][,] YYYY  e.g. "December 1st, 2025"
+    # "Month DD[th][,] YYYY" — e.g. "December 1st, 2025" / "Jan 5 2024"
     m = re.fullmatch(
         rf"({_MONTH_RE})\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})",
         s,
         re.IGNORECASE,
     )
     if m:
-        month = MONTHS[m.group(1).lower()]
-        return date(int(m.group(3)), month, int(m.group(2)))
+        return date(int(m.group(3)), MONTHS[m.group(1).lower()], int(m.group(2)))
 
-    # DD[st/nd/rd/th] Month YYYY  e.g. "1st December 2025"
+    # "DD[th] Month YYYY" — e.g. "25th December 2025"
     m = re.fullmatch(
         rf"(\d{{1,2}})(?:st|nd|rd|th)?\s+({_MONTH_RE})\s+(\d{{4}})",
         s,
         re.IGNORECASE,
     )
     if m:
-        month = MONTHS[m.group(2).lower()]
-        return date(int(m.group(3)), month, int(m.group(1)))
+        return date(int(m.group(3)), MONTHS[m.group(2).lower()], int(m.group(1)))
+
+    # "the Nth of Month[,] YYYY" — e.g. "the 1st of December, 2025"
+    m = re.fullmatch(
+        rf"the\s+(\d{{1,2}})(?:st|nd|rd|th)\s+of\s+({_MONTH_RE}),?\s+(\d{{4}})",
+        s,
+        re.IGNORECASE,
+    )
+    if m:
+        return date(int(m.group(3)), MONTHS[m.group(2).lower()], int(m.group(1)))
+
+    # "Month YYYY" — e.g. "December 2025" → 1st of that month
+    m = re.fullmatch(rf"({_MONTH_RE})\s+(\d{{4}})", s, re.IGNORECASE)
+    if m:
+        return date(int(m.group(2)), MONTHS[m.group(1).lower()], 1)
 
     return None
+
+
+def _normalize(s: str) -> str:
+    """Strip trailing periods from abbreviated month names: 'Dec.' → 'Dec'."""
+    return _MONTH_DOT_RE.sub(r"\1", s)
 
 
 def parse(s: str, today: date | None = None) -> date:
     """Parse a natural-language date string and return a ``datetime.date``.
 
     Args:
-        s: A natural-language date string, e.g. "next Tuesday",
-           "5 days before December 1st, 2025", or "in 3 weeks".
+        s: A natural-language date string, e.g. ``"next Tuesday"``,
+           ``"5 days before December 1st, 2025"``, or ``"in 3 weeks"``.
         today: Reference date for relative expressions.  Defaults to the
                current date when not provided.
 
@@ -178,7 +203,7 @@ def parse(s: str, today: date | None = None) -> date:
     if today is None:
         today = date.today()
 
-    norm = s.strip()
+    norm = _normalize(s.strip())
     low = norm.lower()
 
     # ── Simple keywords ──────────────────────────────────────────────────────
@@ -188,9 +213,13 @@ def parse(s: str, today: date | None = None) -> date:
         return today + timedelta(days=1)
     if low == "yesterday":
         return today - timedelta(days=1)
+    if low == "the day after tomorrow":
+        return today + timedelta(days=2)
+    if low == "the day before yesterday":
+        return today - timedelta(days=2)
 
-    # ── next/last week | month | year ────────────────────────────────────────
-    m = re.fullmatch(r"(next|last)\s+(week|month|year)", low)
+    # ── next/last week | month | year (optional leading "the") ───────────────
+    m = re.fullmatch(r"(?:the\s+)?(next|last)\s+(week|month|year)", low)
     if m:
         sign = 1 if m.group(1) == "next" else -1
         unit = m.group(2)
@@ -201,8 +230,8 @@ def parse(s: str, today: date | None = None) -> date:
         else:
             return _add_months(today, 12 * sign)
 
-    # ── next/last/this <weekday> ──────────────────────────────────────────────
-    m = re.fullmatch(rf"(next|last|this)\s+({_WEEKDAY_RE})", low)
+    # ── next/last/this <weekday> (optional leading "the") ────────────────────
+    m = re.fullmatch(rf"(?:the\s+)?(next|last|this)\s+({_WEEKDAY_RE})", low)
     if m:
         qualifier = m.group(1)
         target = WEEKDAYS[m.group(2)]
@@ -216,6 +245,15 @@ def parse(s: str, today: date | None = None) -> date:
         else:  # this
             delta = (target - current) % 7
             return today + timedelta(days=delta)
+
+    # ── "on <weekday>" → next occurrence (same day = today) ─────────────────
+    m = re.fullmatch(rf"on\s+({_WEEKDAY_RE})", low)
+    if m:
+        return _next_weekday(today, WEEKDAYS[m.group(1)])
+
+    # ── bare weekday name → next occurrence (same day = today) ───────────────
+    if low in WEEKDAYS:
+        return _next_weekday(today, WEEKDAYS[low])
 
     # ── in N units ────────────────────────────────────────────────────────────
     m = re.fullmatch(rf"in\s+{_WORD_NUM_RE}\s+(days?|weeks?|months?|years?)", low)
